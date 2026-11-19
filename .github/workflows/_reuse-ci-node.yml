@@ -1,0 +1,42 @@
+name: _reuse-ci-node
+on:
+  workflow_call: {}
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      - name: Install
+        run: npm ci || npm install
+      - name: Lint (report-only)
+        run: npm run lint --if-present
+        continue-on-error: true
+      - name: Typecheck (report-only)
+        run: '[ -f tsconfig.json ] && npx --no-install tsc --noEmit || echo "no tsconfig"'
+        continue-on-error: true
+      - name: Build (report-only)
+        run: npm run build --if-present
+        continue-on-error: true
+      - name: Test
+        run: npm test --if-present
+      - name: Coverage (report-only)
+        run: |
+          npm run coverage --if-present || npm run test:coverage --if-present || \
+          npx --no-install c8 --reporter=text npm test --if-present || \
+          echo "No coverage script. (Add a 'coverage' npm script to measure it.)"
+        continue-on-error: true
+      - name: npm audit (security, report-only)
+        run: npm audit --audit-level=high || true
+        continue-on-error: true
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-node
+          path: |
+            coverage/**
+            coverage-final.json
+          if-no-files-found: ignore

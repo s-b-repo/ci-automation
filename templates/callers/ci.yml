@@ -1,0 +1,14 @@
+name: CI
+# Thin caller — the CI logic (lint + build + test + coverage + security) lives in
+# s-b-repo/ci-automation (__CIREUSE__), so improvements there apply here automatically.
+on:
+  push:
+    branches: [__BRANCH__]
+  pull_request:
+    branches: [__BRANCH__]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ci:
+    uses: s-b-repo/ci-automation/.github/workflows/__CIREUSE__@main

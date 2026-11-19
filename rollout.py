@@ -41,8 +41,9 @@ NONCODE = re.compile(r'(cheat ?sheet|cheatsheet|guide|dorks|awesome|list|-docs|d
 CODEQL = {'Python':('python','none'),'JavaScript':('javascript-typescript','none'),
     'TypeScript':('javascript-typescript','none'),'Go':('go','none'),'C#':('csharp','none'),
     'Java':('java-kotlin','none')}
-CI_TPL = {'Rust':'rust.yml','Python':'python.yml','JavaScript':'node.yml','TypeScript':'node.yml',
-    'Go':'go.yml','C#':'dotnet.yml','Dart':'dart.yml','Shell':'shell.yml'}
+CI_REUSE = {'Rust':'_reuse-ci-rust.yml','Python':'_reuse-ci-python.yml',
+    'JavaScript':'_reuse-ci-node.yml','TypeScript':'_reuse-ci-node.yml','Go':'_reuse-ci-go.yml',
+    'C#':'_reuse-ci-dotnet.yml','Dart':'_reuse-ci-dart.yml','Shell':'_reuse-ci-shell.yml'}
 ECO = {'Rust':('cargo',('Cargo.toml',)),'Python':('pip',('requirements.txt','pyproject.toml','setup.py','setup.cfg')),
     'JavaScript':('npm',('package.json',)),'TypeScript':('npm',('package.json',)),
     'Go':('gomod',('go.mod',)),'C#':('nuget',('packages.config',)),'Dart':('pub',('pubspec.yaml',))}
@@ -114,9 +115,10 @@ def build_files(repo, branch, root_names, wf_names, dotgh_names):
               .replace("__CQLANG__", cq_lang).replace("__CQMODE__", mode))
         files[".github/workflows/codeql.yml"] = cq.encode()
 
-    if not has_ci and lang in CI_TPL:
-        files[".github/workflows/ci-automation.yml"] = \
-            read_tpl(f"ci/{CI_TPL[lang]}").decode().replace("__BRANCH__", br).encode()
+    if not has_ci and lang in CI_REUSE:
+        ci = (read_tpl("callers/ci.yml").decode()
+              .replace("__BRANCH__", br).replace("__CIREUSE__", CI_REUSE[lang]))
+        files[".github/workflows/ci-automation.yml"] = ci.encode()
 
     if not has_dependabot:
         blocks = ['  - package-ecosystem: "github-actions"\n    directory: "/"\n    schedule:\n      interval: "weekly"\n']

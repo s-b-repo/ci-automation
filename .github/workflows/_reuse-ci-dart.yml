@@ -1,0 +1,29 @@
+name: _reuse-ci-dart
+on:
+  workflow_call: {}
+jobs:
+  flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Pub get
+        run: flutter pub get
+      - name: Format (report-only)
+        run: dart format --output=none --set-exit-if-changed .
+        continue-on-error: true
+      - name: Analyze (report-only)
+        run: flutter analyze
+        continue-on-error: true
+      - name: Test + coverage (report-only)
+        run: flutter test --coverage
+        continue-on-error: true
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-dart
+          path: coverage/lcov.info
+          if-no-files-found: ignore

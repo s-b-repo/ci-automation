@@ -1,0 +1,25 @@
+name: _reuse-ci-dotnet
+on:
+  workflow_call: {}
+jobs:
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore
+        run: dotnet restore
+      - name: Build
+        run: dotnet build --no-restore -c Release
+      - name: Test + coverage (report-only)
+        run: dotnet test --no-build -c Release --verbosity minimal --collect:"XPlat Code Coverage"
+        continue-on-error: true
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-dotnet
+          path: '**/coverage.cobertura.xml'
+          if-no-files-found: ignore

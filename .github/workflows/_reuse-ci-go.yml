@@ -1,0 +1,37 @@
+name: _reuse-ci-go
+on:
+  workflow_call: {}
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Build
+        run: go build ./...
+      - name: Vet (report-only)
+        run: go vet ./...
+        continue-on-error: true
+      - name: Staticcheck (report-only)
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          "$(go env GOPATH)/bin/staticcheck" ./... || true
+        continue-on-error: true
+      - name: Test + coverage
+        run: |
+          go test -coverprofile=coverage.out -covermode=atomic ./...
+          echo "### Coverage" && go tool cover -func=coverage.out | tail -1
+      - name: govulncheck (security, report-only)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./... || true
+        continue-on-error: true
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-go
+          path: coverage.out
+          if-no-files-found: ignore
