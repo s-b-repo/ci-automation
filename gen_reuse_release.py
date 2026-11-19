@@ -36,7 +36,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SYNC_MANIFEST: auto
-      REL: ${{{{ runner.temp }}}}/rel
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v4
@@ -46,10 +45,10 @@ jobs:
 
       - name: Materialize release scripts
         run: |
-          mkdir -p "$REL"
-          printf %s '{b64("compute-release.sh")}' | base64 -d > "$REL/compute-release.sh"
-          printf %s '{b64("bump-manifest.py")}' | base64 -d > "$REL/bump-manifest.py"
-          printf %s '{b64("release-notes.py")}' | base64 -d > "$REL/release-notes.py"
+          mkdir -p "$RUNNER_TEMP/rel"
+          printf %s '{b64("compute-release.sh")}' | base64 -d > "$RUNNER_TEMP/rel/compute-release.sh"
+          printf %s '{b64("bump-manifest.py")}' | base64 -d > "$RUNNER_TEMP/rel/bump-manifest.py"
+          printf %s '{b64("release-notes.py")}' | base64 -d > "$RUNNER_TEMP/rel/release-notes.py"
 
       - name: Compute next version
         id: ver
@@ -59,7 +58,7 @@ jobs:
           ra='${{{{ inputs.release_as }}}}'
           if [ -n "$ev" ]; then force="$ev";
           else case "$ra" in patch|minor|major|none) force="$ra" ;; esac; fi
-          out="$(bash "$REL/compute-release.sh" "$force")"
+          out="$(bash "$RUNNER_TEMP/rel/compute-release.sh" "$force")"
           echo "$out"
           echo "$out" >> "$GITHUB_OUTPUT"
 
@@ -77,7 +76,7 @@ jobs:
         if: steps.ver.outputs.next_version != '' && env.SYNC_MANIFEST != 'off'
         run: |
           v="${{{{ steps.ver.outputs.next_version }}}}"
-          changed="$(python3 "$REL/bump-manifest.py" "${{v#v}}" 2>/dev/null || true)"
+          changed="$(python3 "$RUNNER_TEMP/rel/bump-manifest.py" "${{v#v}}" 2>/dev/null || true)"
           if [ -n "$changed" ]; then
             echo "Bumped: $changed"
             printf '%s\\n' "$changed" | xargs -r git add --
@@ -98,13 +97,13 @@ jobs:
           if git rev-parse "$v" >/dev/null 2>&1; then
             echo "::error::tag $v already exists"; exit 1
           fi
-          python3 "$REL/release-notes.py" "$prev" > "$REL/notes.md"
+          python3 "$RUNNER_TEMP/rel/release-notes.py" "$prev" > "$RUNNER_TEMP/rel/notes.md"
           if [ "$prev" != "none" ] && [ -n "$prev" ]; then
-            {{ echo; echo "**Full Changelog**: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}/compare/${{prev}}...${{v}}"; }} >> "$REL/notes.md"
+            {{ echo; echo "**Full Changelog**: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}/compare/${{prev}}...${{v}}"; }} >> "$RUNNER_TEMP/rel/notes.md"
           fi
           git tag -a "$v" -m "$v"
           git push origin "refs/tags/$v"
-          gh release create "$v" --title "$v" --notes-file "$REL/notes.md" --latest --verify-tag
+          gh release create "$v" --title "$v" --notes-file "$RUNNER_TEMP/rel/notes.md" --latest --verify-tag
           echo "Released $v"
 """
 
