@@ -37,8 +37,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ROLLOUT_TOKEN }}
         run: |
-          args='${{ inputs.args }}'
-          [ -z "$args" ] && args='--list'
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            args="--go"                       # scheduled worker does the real work
+          else
+            args="${{ inputs.args }}"
+            [ -z "$args" ] && args="--list"   # manual dispatch defaults to dry-run
+          fi
           echo "rollout.py $args"
           python3 rollout.py $args
       - name: Upload audit report
