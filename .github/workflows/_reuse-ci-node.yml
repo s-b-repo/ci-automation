@@ -10,7 +10,9 @@ jobs:
         with:
           node-version: 'lts/*'
       - name: Install
-        run: npm ci || npm install
+        run: |
+          if [ -f package.json ]; then npm ci || npm install
+          else echo "No root package.json — not a root-level Node project; skipping."; fi
       - name: Lint (report-only)
         run: npm run lint --if-present
         continue-on-error: true
@@ -21,7 +23,10 @@ jobs:
         run: npm run build --if-present
         continue-on-error: true
       - name: Test
-        run: npm test --if-present
+        run: |
+          if [ ! -f package.json ]; then echo "No package.json; skipping tests."
+          elif grep -q 'no test specified' package.json; then echo "Placeholder test script; skipping."
+          else npm test --if-present; fi
       - name: Coverage (report-only)
         run: |
           npm run coverage --if-present || npm run test:coverage --if-present || \
