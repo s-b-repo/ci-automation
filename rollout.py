@@ -43,7 +43,8 @@ CODEQL = {'Python':('python','none'),'JavaScript':('javascript-typescript','none
     'Java':('java-kotlin','none')}
 CI_REUSE = {'Rust':'_reuse-ci-rust.yml','Python':'_reuse-ci-python.yml',
     'JavaScript':'_reuse-ci-node.yml','TypeScript':'_reuse-ci-node.yml','Go':'_reuse-ci-go.yml',
-    'C#':'_reuse-ci-dotnet.yml','Dart':'_reuse-ci-dart.yml','Shell':'_reuse-ci-shell.yml'}
+    'C#':'_reuse-ci-dotnet.yml','Dart':'_reuse-ci-dart.yml','Shell':'_reuse-ci-shell.yml',
+    'C':'_reuse-ci-cpp.yml','C++':'_reuse-ci-cpp.yml'}
 ECO = {'Rust':('cargo',('Cargo.toml',)),'Python':('pip',('requirements.txt','pyproject.toml','setup.py','setup.cfg')),
     'JavaScript':('npm',('package.json',)),'TypeScript':('npm',('package.json',)),
     'Go':('gomod',('go.mod',)),'C#':('nuget',('packages.config',)),'Dart':('pub',('pubspec.yaml',))}

@@ -1,0 +1,16 @@
+name: _reuse-ci-cpp
+# C/C++ static analysis via cppcheck (no build needed, unlike CodeQL autobuild).
+on:
+  workflow_call: {}
+jobs:
+  cppcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: Cppcheck (report-only)
+        run: |
+          cppcheck --enable=warning,performance,portability --inline-suppr \
+            --std=c++17 --language=c++ --quiet --error-exitcode=0 . || true
+        continue-on-error: true
