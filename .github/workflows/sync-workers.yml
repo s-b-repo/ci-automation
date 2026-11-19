@@ -1,0 +1,52 @@
+name: Sync workers
+
+# The management "worker": re-scans every repo and rolls out / updates the
+# release + quality/security workflows across them by opening PRs.
+#
+# Needs a secret ROLLOUT_TOKEN: a PAT with `repo` + `workflow` scope (classic),
+# or a fine-grained PAT with Contents:write, Pull requests:write, Workflows:write
+# on all the target repos. GITHUB_TOKEN cannot reach other repos.
+
+on:
+  workflow_dispatch:
+    inputs:
+      args:
+        description: 'rollout.py args, e.g. "--go --lang Rust" or "--go --only repoA,repoB". Default is a dry-run.'
+        type: string
+        required: false
+        default: "--list"
+  schedule:
+    - cron: '0 6 * * 1'   # weekly Monday 06:00 UTC — dry-run report by default
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Audit all repos
+        env:
+          GH_TOKEN: ${{ secrets.ROLLOUT_TOKEN }}
+        run: python3 audit.py
+      - name: Roll out / update workers
+        env:
+          GH_TOKEN: ${{ secrets.ROLLOUT_TOKEN }}
+        run: |
+          args='${{ inputs.args }}'
+          [ -z "$args" ] && args='--list'
+          echo "rollout.py $args"
+          python3 rollout.py $args
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit
+          path: |
+            audit.json
+            audit.tsv
+          if-no-files-found: ignore

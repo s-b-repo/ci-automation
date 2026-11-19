@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
-"""Roll out release + quality/security workflows to s-b-repo code repos.
+"""Roll out / update release + quality/security workers across s-b-repo repos.
 
-Idempotent & additive: never clobbers existing workflows, only adds missing
-files, opens one PR per repo on branch `ci/add-automation`. Skips repos that
-are already covered, empty, or that already have an open automation PR.
+Emits thin CALLER workflows that invoke the reusable workflows in this repo
+(_reuse-release.yml, _reuse-codeql.yml) plus a copied language CI and Dependabot.
+Idempotent & additive: only adds missing files, never clobbers existing
+workflows, opens one PR per repo on branch `ci/add-automation`.
 
 Usage:
-  rollout.py --list                 # show planned actions, no changes
-  rollout.py --lang Rust            # only Rust repos
-  rollout.py --only a,b,c           # only these repos
-  rollout.py --limit 3              # cap count (for testing)
-  rollout.py --go                   # actually open PRs (default is dry-run)
+  rollout.py --list                 # dry-run (plan only)
+  rollout.py --lang Rust            # filter by language
+  rollout.py --only a,b,c           # specific repos
+  rollout.py --limit 3              # cap (testing)
+  rollout.py --go                   # actually open PRs
+
+Requires GH_TOKEN (PAT with repo+workflow scope) when run in Actions.
+Reads audit.json from the working dir (run audit.py first).
 """
-import argparse, base64, hashlib, json, re, subprocess, sys, time
+import argparse, base64, hashlib, json, os, re, subprocess, time
 
 OWNER = "s-b-repo"
-SP = "/tmp/claude-1000/-home-kali-Documents-camio/75ab06db-f124-4537-80bf-bb53bee623b9/scratchpad"
-TPL = f"{SP}/templates"
+HERE = os.path.dirname(os.path.abspath(__file__))
+TPL = os.path.join(HERE, "templates")
+AUDIT_JSON = os.environ.get("AUDIT_JSON") or os.path.join(os.getcwd(), "audit.json")
 BRANCH = "ci/add-automation"
 
 BACKUP = re.compile(r'(backup|-mirror|mirror-|snapshot|redux|darkclove)', re.I)
@@ -25,15 +30,17 @@ MAL = re.compile(r'(rat|spyware|keylog|cred-?steal|cookie-grabber|ddos|dos-tool|
     r'skibbidi|discord.*break|break.*discord|ppcord-bug|spoofing|number-gen|nuber-gen|'
     r'account-gen|coupon-dorker|mullvad.*gen|embybypass|hypnogoon|basic-iphone|ransom|'
     r'ps1ware|packer$|dmarc-spoof|supercookie|exfil|skiddedsql|api-dos|next.js-dos|comkid|'
-    r'lfd-down|dstat|FBI-NET|iloveproxies|whyabuse|badpython|badadmin)', re.I)
+    r'lfd-down|dstat|FBI-NET|iloveproxies|whyabuse|badpython|badadmin|flood|deadshot|'
+    r'[-_]c2($|[-_])|[-_]c3($|[-_])|firec2|snowc2|c2-panel)', re.I)
 NONCODE = re.compile(r'(cheat ?sheet|cheatsheet|guide|dorks|awesome|list|-docs|docs$|'
     r'hosting-list|blocklist|readme|\.github\.io|^s-b-repo$|^a-ideas$|^test$|materials|'
     r'trick-book|learning|collection|examples$|-example|notes|comparison|intune|'
     r'shaders|nvidea-guide|community$|community-edition)', re.I)
 
+# CodeQL only where build-mode:none works (C/C++ needs a build -> excluded).
 CODEQL = {'Python':('python','none'),'JavaScript':('javascript-typescript','none'),
     'TypeScript':('javascript-typescript','none'),'Go':('go','none'),'C#':('csharp','none'),
-    'Java':('java-kotlin','none'),'C':('c-cpp','autobuild'),'C++':('c-cpp','autobuild')}
+    'Java':('java-kotlin','none')}
 CI_TPL = {'Rust':'rust.yml','Python':'python.yml','JavaScript':'node.yml','TypeScript':'node.yml',
     'Go':'go.yml','C#':'dotnet.yml','Dart':'dart.yml','Shell':'shell.yml'}
 ECO = {'Rust':('cargo',('Cargo.toml',)),'Python':('pip',('requirements.txt','pyproject.toml','setup.py','setup.cfg')),
@@ -57,9 +64,8 @@ def gj(path, method="GET", payload=None):
         rc, out, err = gh(path, method, payload)
         if rc != 0:
             e = err.strip()
-            if ("secondary rate limit" in e.lower() or "rate limit" in e.lower()) and attempt < 3:
-                time.sleep(60)
-                continue
+            if "rate limit" in e.lower() and attempt < 3:
+                time.sleep(60); continue
             return None, e
         try:
             return json.loads(out), None
@@ -75,13 +81,13 @@ def is_legit(r):
     n = r["name"]
     if MAL.search(n): return False
     if r["language"] in (None, "-"): return False
-    if r["language"] in (None,"-","HTML","Markdown","CSS","Batchfile") and NONCODE.search(n): return False
-    if NONCODE.search(n) and r["language"] in (None,"-","HTML","Markdown","CSS","Batchfile"): return False
+    if NONCODE.search(n) and r["language"] in (None,"-","HTML","Markdown","CSS","Batchfile"):
+        return False
     return True
 
 
 def read_tpl(rel):
-    with open(f"{TPL}/{rel}", "rb") as f:
+    with open(os.path.join(TPL, rel), "rb") as f:
         return f.read()
 
 
@@ -91,40 +97,27 @@ def cron_for(name):
 
 
 def build_files(repo, branch, root_names, wf_names, dotgh_names):
-    """Return {path: bytes} of files to ADD (missing only)."""
-    lang = repo["language"]
-    name = repo["name"]
-    files = {}
-    br = branch
-
+    lang = repo["language"]; name = repo["name"]; files = {}; br = branch
     has_release = "release.yml" in wf_names
     has_codeql = any("codeql" in w for w in wf_names)
     has_ci = bool(EXISTING_CI & set(wf_names))
     has_dependabot = "dependabot.yml" in dotgh_names
 
-    # --- release automation set ---
     if not has_release:
-        rel = read_tpl("common/.github/workflows/release.yml").decode().replace("__BRANCH__", br)
-        files[".github/workflows/release.yml"] = rel.encode()
-        files[".github/release.yml"] = read_tpl("common/.github/release.yml")
-        for s in ("compute-release.sh", "bump-manifest.py", "release-notes.py"):
-            files[f".github/release/{s}"] = read_tpl(f"common/.github/release/{s}")
+        files[".github/workflows/release.yml"] = \
+            read_tpl("callers/release.yml").decode().replace("__BRANCH__", br).encode()
 
-    # --- CodeQL --- (free only on PUBLIC repos; private needs paid Advanced Security)
     if not has_codeql and lang in CODEQL and not repo["private"]:
         cq_lang, mode = CODEQL[lang]
-        matrix = f"          - language: {cq_lang}\n            build-mode: {mode}\n"
-        cq = (read_tpl("codeql/codeql.yml").decode()
+        cq = (read_tpl("callers/codeql.yml").decode()
               .replace("__BRANCH__", br).replace("__CRON__", cron_for(name))
-              .replace("__MATRIX__", matrix))
+              .replace("__CQLANG__", cq_lang).replace("__CQMODE__", mode))
         files[".github/workflows/codeql.yml"] = cq.encode()
 
-    # --- language CI ---
     if not has_ci and lang in CI_TPL:
-        ci = read_tpl(f"ci/{CI_TPL[lang]}").decode().replace("__BRANCH__", br)
-        files[".github/workflows/ci-automation.yml"] = ci.encode()
+        files[".github/workflows/ci-automation.yml"] = \
+            read_tpl(f"ci/{CI_TPL[lang]}").decode().replace("__BRANCH__", br).encode()
 
-    # --- dependabot ---
     if not has_dependabot:
         blocks = ['  - package-ecosystem: "github-actions"\n    directory: "/"\n    schedule:\n      interval: "weekly"\n']
         if lang in ECO:
@@ -137,49 +130,34 @@ def build_files(repo, branch, root_names, wf_names, dotgh_names):
 
 
 def list_names(path):
-    data, err = gj(path)
-    if data is None or not isinstance(data, list):
-        return set()
-    return {e["name"] for e in data}
+    data, _ = gj(path)
+    return {e["name"] for e in data} if isinstance(data, list) else set()
 
 
 def process(repo, go):
-    name = repo["name"]
-    full = f"{OWNER}/{name}"
-    branch = repo["default"]
+    name = repo["name"]; full = f"{OWNER}/{name}"; branch = repo["default"]
     if not branch or branch == "-":
-        return "skip", "no default branch (empty repo)"
-
-    # existing content
+        return "skip", "no default branch"
     wf_names = list_names(f"repos/{full}/contents/.github/workflows")
     dotgh_names = list_names(f"repos/{full}/contents/.github")
     root_names = list_names(f"repos/{full}/contents")
     if not root_names:
         return "skip", "empty repo"
-
     files = build_files(repo, branch, root_names, wf_names, dotgh_names)
     if not files:
         return "skip", "already covered"
-
     plan = ", ".join(sorted(p.split("/")[-1] for p in files))
     if not go:
         return "plan", f"{len(files)} files: {plan}"
 
-    # already have the branch / PR?
     ref, _ = gj(f"repos/{full}/git/ref/heads/{branch}")
     if ref is None:
         return "fail", "cannot read base ref"
     base_sha = ref["object"]["sha"]
-    existing_branch, _ = gj(f"repos/{full}/git/ref/heads/{BRANCH}")
-    if existing_branch is not None:
+    if gj(f"repos/{full}/git/ref/heads/{BRANCH}")[0] is not None:
         prs, _ = gj(f"repos/{full}/pulls?head={OWNER}:{BRANCH}&state=open")
-        if prs:
-            return "skip", f"PR already open: {prs[0]['html_url']}"
-        return "skip", "automation branch already exists"
-
+        return "skip", (f"PR open: {prs[0]['html_url']}" if prs else "branch exists")
     base_commit, _ = gj(f"repos/{full}/git/commits/{base_sha}")
-    base_tree = base_commit["tree"]["sha"]
-
     tree = []
     for path, content in files.items():
         blob, err = gj(f"repos/{full}/git/blobs", "POST",
@@ -187,34 +165,26 @@ def process(repo, go):
         if blob is None:
             return "fail", f"blob {path}: {err}"
         tree.append({"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]})
-
-    newtree, err = gj(f"repos/{full}/git/trees", "POST", {"base_tree": base_tree, "tree": tree})
-    if newtree is None:
+    nt, err = gj(f"repos/{full}/git/trees", "POST",
+                 {"base_tree": base_commit["tree"]["sha"], "tree": tree})
+    if nt is None:
         return "fail", f"tree: {err}"
-    msg = "ci: add automated releases + quality/security workflows\n\nAdds per-change SemVer releases, CodeQL, Dependabot and language CI."
-    commit, err = gj(f"repos/{full}/git/commits", "POST",
-                     {"message": msg, "tree": newtree["sha"], "parents": [base_sha]})
-    if commit is None:
+    msg = "ci: add automated releases + quality/security workflows"
+    c, err = gj(f"repos/{full}/git/commits", "POST",
+                {"message": msg, "tree": nt["sha"], "parents": [base_sha]})
+    if c is None:
         return "fail", f"commit: {err}"
-    newref, err = gj(f"repos/{full}/git/refs", "POST",
-                     {"ref": f"refs/heads/{BRANCH}", "sha": commit["sha"]})
-    if newref is None:
-        return "fail", f"ref: {err}"
-
-    body = ("Automated rollout of release + quality/security workflows.\n\n"
-            "- **Release**: per-change SemVer from Conventional Commits + auto notes "
-            "(`.github/workflows/release.yml`, `.github/release/`)\n"
-            "- **CodeQL**: static bug/security analysis (where supported)\n"
-            "- **Dependabot**: dependency + security updates\n"
-            "- **CI**: language-aware lint (report-only) + build + test\n\n"
-            "Lint/format are non-blocking; build/test are the gate. "
-            "Merging activates automated releases on pushes to this branch.")
+    if gj(f"repos/{full}/git/refs", "POST", {"ref": f"refs/heads/{BRANCH}", "sha": c["sha"]})[0] is None:
+        return "fail", "ref create"
+    body = ("Automated rollout of release + quality/security workers (thin callers of "
+            "s-b-repo/ci-automation reusable workflows).\n\n"
+            "- Release: per-change SemVer + auto notes\n- CodeQL (public repos)\n"
+            "- Dependabot\n- Language CI (lint report-only; build/test gate)\n\n"
+            "Merging activates automated releases on pushes to the default branch.")
     pr, err = gj(f"repos/{full}/pulls", "POST",
                  {"title": "ci: add automated releases + quality/security workflows",
                   "head": BRANCH, "base": branch, "body": body})
-    if pr is None:
-        return "fail", f"pr: {err}"
-    return "pr", pr["html_url"]
+    return ("pr", pr["html_url"]) if pr else ("fail", f"pr: {err}")
 
 
 def main():
@@ -222,18 +192,15 @@ def main():
     ap.add_argument("--lang"); ap.add_argument("--only"); ap.add_argument("--limit", type=int)
     ap.add_argument("--go", action="store_true"); ap.add_argument("--list", action="store_true")
     a = ap.parse_args()
-
-    rows = json.load(open(f"{SP}/audit.json"))
+    rows = json.load(open(AUDIT_JSON))
     repos = [r for r in rows if is_source(r) and is_legit(r)]
     if a.lang:
         repos = [r for r in repos if (r["language"] or "") == a.lang]
     if a.only:
-        want = set(a.only.split(","))
-        repos = [r for r in repos if r["name"] in want]
+        want = set(a.only.split(",")); repos = [r for r in repos if r["name"] in want]
     repos.sort(key=lambda r: r["name"].lower())
     if a.limit:
         repos = repos[:a.limit]
-
     go = a.go and not a.list
     print(f"{'DRY-RUN' if not go else 'EXECUTING'} over {len(repos)} repos\n", flush=True)
     counts = {}

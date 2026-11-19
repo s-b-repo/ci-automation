@@ -1,54 +1,64 @@
 # ci-automation
 
-Reusable toolkit that adds **automated per-change SemVer releases** and
-**free code-quality / bug / security CI** to any GitHub repo, and rolls it out
-across many repos at once via pull requests.
+Central management for all of `s-b-repo`'s GitHub "workers" (workflows):
+**automated per-change SemVer releases** + **free code-quality / bug / security
+CI**, rolled out and kept in sync across every repo.
 
-Built for the `s-b-repo` account. Everything here uses **only free** GitHub
-features (Actions on public repos, Dependabot, open-source actions). CodeQL is
-added to **public repos only** — on private repos it needs paid GitHub Advanced
-Security, so private repos get release + Dependabot + CI instead.
+Everything here uses **only free** GitHub features (Actions on public repos,
+Dependabot, open-source actions). CodeQL is added to **public repos only** — on
+private repos it needs paid Advanced Security, so private repos get release +
+Dependabot + CI instead.
 
-## What each repo gets
+## How it's organized
 
-| File | Purpose |
-|---|---|
-| `.github/workflows/release.yml` + `.github/release/*` | Per-change SemVer release from Conventional Commits + categorized auto-notes |
-| `.github/workflows/codeql.yml` | CodeQL static bug/security analysis (public repos, supported languages) |
-| `.github/workflows/ci-automation.yml` | Language-aware lint (report-only) + build + test |
-| `.github/dependabot.yml` | Dependency + security updates (deps ecosystem + github-actions) |
-
-Release bump rules (highest wins since the last `vX.Y.Z` tag):
-`feat!:`/`BREAKING CHANGE` → major, `feat:` → minor, everything else → patch.
-`[skip release]` in a commit suppresses it.
-
-## Usage
-
-```bash
-# 1. Inventory every repo (languages, existing workflows, 7-day run health)
-python3 audit.py                      # writes audit.json / audit.tsv
-
-# 2. Preview what would change (no writes)
-python3 rollout.py --list
-python3 rollout.py --list --lang Rust
-
-# 3. Open the PRs
-python3 rollout.py --go --only myrepo        # one repo
-python3 rollout.py --go --lang Python        # a language batch
-python3 rollout.py --go                       # everything legit
+```
+.github/workflows/
+  _reuse-release.yml   # reusable release logic (workflow_call) — edit once, every repo benefits
+  _reuse-codeql.yml    # reusable CodeQL analysis (workflow_call)
+  sync-workers.yml     # the management bot: re-scans all repos, opens update PRs
+release/               # compute-release.sh, bump-manifest.py, release-notes.py (used by _reuse-release)
+templates/
+  callers/             # thin caller workflows each repo gets (call the _reuse-* above)
+  ci/                  # language CI (copied into repos): rust/python/node/go/dotnet/dart/shell
+audit.py rollout.py
 ```
 
-`rollout.py` is **idempotent and additive**: it only adds missing files, never
-clobbers existing workflows, skips repos already covered, and opens one PR per
-repo on branch `ci/add-automation`.
+**Reusable workflows** are the key idea: each repo's `release.yml` / `codeql.yml`
+is a 10-line *caller* that does `uses: s-b-repo/ci-automation/.github/workflows/_reuse-*.yml@main`.
+Improving release or CodeQL behaviour = editing one file here; all repos pick it
+up automatically.
 
-It **excludes** malware/abuse tooling (RATs, spyware, keyloggers, DoS/flood,
-C2/botnets, cheats, credential/cookie stealers, spoofing/fraud) and skips
-non-code repos (cheatsheets, dork lists, docs). Edit the `MAL` / `NONCODE`
-patterns in `rollout.py` to adjust.
+## The sync bot
 
-## Templates
+`sync-workers.yml` runs `audit.py` (inventory every repo) then `rollout.py`
+(open/refresh PRs). Trigger it from the Actions tab (**Run workflow**) with args
+like `--go --lang Rust`, or let the weekly schedule report drift (dry-run by
+default).
 
-`templates/` holds the source files. Placeholders injected per repo:
-`__BRANCH__` (default branch), `__CRON__` (CodeQL schedule), `__MATRIX__`
-(CodeQL language matrix).
+It needs a secret **`ROLLOUT_TOKEN`** — a PAT with `repo` + `workflow` scope
+(classic), or a fine-grained PAT with Contents:write + Pull requests:write +
+Workflows:write on the target repos. `GITHUB_TOKEN` cannot reach other repos.
+
+```bash
+gh secret set ROLLOUT_TOKEN -R s-b-repo/ci-automation --body '<your_pat>'
+```
+
+## Run it locally instead
+
+```bash
+python3 audit.py                 # writes audit.json / audit.tsv
+python3 rollout.py --list        # preview
+python3 rollout.py --go --lang Python   # open PRs for a language
+python3 rollout.py --go          # everything legit
+```
+
+`rollout.py` is idempotent/additive: only adds missing files, never clobbers
+existing workflows, one PR per repo on branch `ci/add-automation`. It **excludes**
+malware/abuse tooling (RATs, spyware, keyloggers, DoS/flood, C2/botnets, cheats,
+credential/cookie stealers, spoofing/fraud) and skips non-code repos. Adjust the
+`MAL` / `NONCODE` patterns in `rollout.py`.
+
+## Release bump rules
+
+Highest wins since the last `vX.Y.Z` tag: `feat!:`/`BREAKING CHANGE` → major,
+`feat:` → minor, everything else → patch. `[skip release]` suppresses.

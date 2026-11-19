@@ -1,0 +1,21 @@
+name: CodeQL
+# Thin caller — analysis logic lives in s-b-repo/ci-automation (_reuse-codeql.yml).
+on:
+  push:
+    branches: [__BRANCH__]
+  pull_request:
+    branches: [__BRANCH__]
+  schedule:
+    - cron: '__CRON__'
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+jobs:
+  codeql:
+    uses: s-b-repo/ci-automation/.github/workflows/_reuse-codeql.yml@main
+    with:
+      language: __CQLANG__
+      build_mode: __CQMODE__

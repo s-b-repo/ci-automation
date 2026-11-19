@@ -2,12 +2,13 @@
 """Inventory every repo the user owns: metadata, existing workflows, runs (7d).
 Read-only. Writes audit.tsv + audit.json into the scratchpad."""
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 
 OWNER = "s-b-repo"
-OUT = "/tmp/claude-1000/-home-kali-Documents-camio/75ab06db-f124-4537-80bf-bb53bee623b9/scratchpad"
+OUT = os.environ.get("OUT_DIR") or os.getcwd()
 SINCE = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

@@ -1,0 +1,36 @@
+name: _reuse-codeql
+
+# Reusable CodeQL analysis. Called by a repo's codeql.yml; runs in that repo.
+on:
+  workflow_call:
+    inputs:
+      language:
+        type: string
+        required: true
+      build_mode:
+        type: string
+        required: false
+        default: none
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ inputs.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ inputs.language }}
+          build-mode: ${{ inputs.build_mode }}
+          queries: security-and-quality
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ inputs.language }}"
