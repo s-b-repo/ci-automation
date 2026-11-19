@@ -1,0 +1,5 @@
+audit.json
+audit.tsv
+*.log
+*-checks.txt
+__pycache__/
