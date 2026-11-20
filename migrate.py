@@ -13,8 +13,12 @@ import argparse, base64, json, os, subprocess, time
 OWNER = "s-b-repo"
 HERE = os.path.dirname(os.path.abspath(__file__))
 AUDIT_JSON = os.environ.get("AUDIT_JSON") or os.path.join(os.getcwd(), "audit.json")
-REL_CALLER = open(os.path.join(HERE, "templates/callers/release.yml")).read()
-CI_CALLER = open(os.path.join(HERE, "templates/callers/ci.yml")).read()
+
+with open(os.path.join(HERE, "templates/callers/release.yml"), encoding="utf-8") as _f:
+    REL_CALLER = _f.read()
+with open(os.path.join(HERE, "templates/callers/ci.yml"), encoding="utf-8") as _f:
+    CI_CALLER = _f.read()
+
 CI_REUSE = {'Rust':'_reuse-ci-rust.yml','Python':'_reuse-ci-python.yml',
     'JavaScript':'_reuse-ci-node.yml','TypeScript':'_reuse-ci-node.yml','Go':'_reuse-ci-go.yml',
     'C#':'_reuse-ci-dotnet.yml','Dart':'_reuse-ci-dart.yml','Shell':'_reuse-ci-shell.yml'}
@@ -29,7 +33,9 @@ def api(path, method="GET", fields=None):
         return None, r.stderr.strip().split("\n")[-1][:90]
     try:
         return json.loads(r.stdout), None
-    except Exception:
+    except json.JSONDecodeError:
+        # Some endpoints legitimately return non-JSON (e.g. raw file bytes).
+        # Only JSON decoding should fall through to the raw body here.
         return r.stdout, None
 
 
@@ -58,7 +64,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only"); ap.add_argument("--go", action="store_true")
     a = ap.parse_args()
-    rows = json.load(open(AUDIT_JSON))
+    with open(AUDIT_JSON, encoding="utf-8") as _f:
+        rows = json.load(_f)
     if a.only:
         want = set(a.only.split(",")); rows = [r for r in rows if r["name"] in want]
     counts = {}
