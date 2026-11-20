@@ -103,7 +103,9 @@ jobs:
     name: No orphan templates
     # Every file under templates/ must be read by at least one script or
     # referenced by another workflow file, or it is dead code masquerading
-    # as documentation.
+    # as documentation. rollout.py / migrate.py read templates relative to
+    # the templates/ root (e.g. read_tpl("callers/release.yml")), so grep
+    # for both the full path AND the templates/-stripped suffix.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -113,8 +115,11 @@ jobs:
           failed=0
           while IFS= read -r t; do
             rel="${t#./}"
-            if ! grep -rqF "$rel" --include='*.py' --include='*.sh' --include='*.yml' \
-                  --exclude-dir=.git --exclude="$(basename "$t")" .; then
+            suffix="${rel#templates/}"
+            base="$(basename "$t")"
+            if ! grep -rqF -e "$rel" -e "$suffix" \
+                  --include='*.py' --include='*.sh' --include='*.yml' \
+                  --exclude-dir=.git --exclude="$base" .; then
               echo "::error file=$rel::template is not referenced by any script or workflow"
               failed=1
             fi

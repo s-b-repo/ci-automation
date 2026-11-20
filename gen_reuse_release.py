@@ -56,8 +56,8 @@ jobs:
           INPUT_EXPLICIT_VERSION: ${{{{ inputs.explicit_version }}}}
           INPUT_RELEASE_AS: ${{{{ inputs.release_as }}}}
         run: |
-          # Inputs flow through env, never via ${{{{ }}}} interpolation into
-          # shell (workflow-injection safety).
+          # Inputs flow through env, never via GitHub expression interpolation
+          # into shell (workflow-injection safety).
           force=""
           if [ -n "$INPUT_EXPLICIT_VERSION" ]; then
             force="$INPUT_EXPLICIT_VERSION"

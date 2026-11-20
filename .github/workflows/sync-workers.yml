@@ -39,8 +39,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_ARGS: ${{ inputs.args }}
         run: |
-          # Pass user-controlled input through env, never via ${{ }} interpolation
-          # into shell, to avoid workflow command injection.
+          # Pass user-controlled input through env, never via GitHub expression
+          # interpolation into shell, to avoid workflow command injection.
           if [ "$EVENT_NAME" = "schedule" ]; then
             args="--go"                       # scheduled worker does the real work
           else
