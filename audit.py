@@ -5,21 +5,29 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 OWNER = "s-b-repo"
 OUT = os.environ.get("OUT_DIR") or os.getcwd()
-SINCE = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+SINCE = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def gh(args, default=None):
     try:
         r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
-        if r.returncode != 0:
-            return default
-        return r.stdout
-    except Exception:
+    except FileNotFoundError:
+        # `gh` is missing from PATH — unrecoverable, don't pretend the audit ran.
+        sys.exit("error: `gh` CLI not found on PATH; install gh and retry")
+    except subprocess.TimeoutExpired:
+        print(f"warning: gh {args[0]} timed out", file=sys.stderr)
         return default
+    if r.returncode != 0:
+        # Keep the audit resilient to one-off API errors, but tell the operator
+        # what went wrong instead of silently filling in empty rows.
+        print(f"warning: gh {' '.join(args)!s} -> {r.returncode}: "
+              f"{r.stderr.strip().splitlines()[-1:] or ''}", file=sys.stderr)
+        return default
+    return r.stdout
 
 
 repos_raw = gh(["repo", "list", OWNER, "--limit", "300", "--json",
@@ -36,13 +44,13 @@ for r in repos:
                  "--jq", "[.[].name]"])
     try:
         workflows = json.loads(wf_raw) if wf_raw else []
-    except Exception:
+    except json.JSONDecodeError:
         workflows = []
     runs_raw = gh(["api", f"repos/{OWNER}/{name}/actions/runs?per_page=50",
                    "--jq", ".workflow_runs"])
     try:
         runs = json.loads(runs_raw) if runs_raw else []
-    except Exception:
+    except json.JSONDecodeError:
         runs = []
     recent = [x for x in (runs or []) if (x.get("created_at") or "") >= SINCE]
     res = {}
@@ -64,10 +72,10 @@ for r in repos:
     rows.append(row)
     print(f"done: {name:40s} lang={lang:12s} wf={len(workflows)} runs7d={len(recent)}", flush=True)
 
-with open(f"{OUT}/audit.json", "w") as f:
+with open(f"{OUT}/audit.json", "w", encoding="utf-8") as f:
     json.dump(rows, f, indent=2)
 
-with open(f"{OUT}/audit.tsv", "w") as f:
+with open(f"{OUT}/audit.tsv", "w", encoding="utf-8") as f:
     f.write("repo\tpriv\tfork\tarch\tlang\tdefault\tworkflows\truns7d\tresults\n")
     for x in rows:
         f.write("\t".join([

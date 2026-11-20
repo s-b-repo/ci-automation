@@ -71,9 +71,27 @@ def gj(path, method="GET", payload=None):
             return None, e
         try:
             return json.loads(out), None
-        except Exception:
+        except json.JSONDecodeError:
+            # Not every endpoint returns JSON — return the raw body so callers
+            # that don't need JSON still work.
             return out, None
     return None, "rate-limited after retries"
+
+
+def ref_state(path):
+    """Tri-state ref probe: 'exists' | 'missing' | 'error:<msg>'.
+
+    gh api emits 'HTTP 404' on stderr when a ref does not exist. The plain gj
+    wrapper conflates that with any other failure, so a transient error would
+    make the rollout think the PR branch does not exist and then try to create
+    it, which later fails. This separates the two.
+    """
+    rc, _out, err = gh(path)
+    if rc == 0:
+        return "exists"
+    if "HTTP 404" in err or "Not Found" in err:
+        return "missing"
+    return f"error:{err.strip().splitlines()[-1:] or ''}"
 
 
 def is_source(r):
@@ -94,16 +112,19 @@ def read_tpl(rel):
 
 
 def cron_for(name):
-    h = int(hashlib.sha1(name.encode()).hexdigest(), 16)
+    # Deterministic bucketing of repo name -> cron slot; not security.
+    h = int(hashlib.sha1(name.encode(), usedforsecurity=False).hexdigest(), 16)
     return f"{h % 60} {h // 60 % 24} * * {h // 1440 % 7}"
 
 
 def build_files(repo, branch, root_names, wf_names, dotgh_names):
     lang = repo["language"]; name = repo["name"]; files = {}; br = branch
-    has_release = "release.yml" in wf_names
-    has_codeql = any("codeql" in w for w in wf_names)
-    has_ci = bool(EXISTING_CI & set(wf_names))
-    has_dependabot = "dependabot.yml" in dotgh_names
+    wf_lower = {w.lower() for w in wf_names}
+    dotgh_lower = {w.lower() for w in dotgh_names}
+    has_release = "release.yml" in wf_lower
+    has_codeql = any("codeql" in w for w in wf_lower)
+    has_ci = bool(EXISTING_CI & wf_lower)
+    has_dependabot = "dependabot.yml" in dotgh_lower
 
     if not has_release:
         files[".github/workflows/release.yml"] = \
@@ -157,9 +178,14 @@ def process(repo, go):
     if ref is None:
         return "fail", "cannot read base ref"
     base_sha = ref["object"]["sha"]
-    if gj(f"repos/{full}/git/ref/heads/{BRANCH}")[0] is not None:
+    state = ref_state(f"repos/{full}/git/ref/heads/{BRANCH}")
+    if state == "exists":
         prs, _ = gj(f"repos/{full}/pulls?head={OWNER}:{BRANCH}&state=open")
         return "skip", (f"PR open: {prs[0]['html_url']}" if prs else "branch exists")
+    if state.startswith("error:"):
+        # Don't proceed to create a tree/commit on uncertain state — a later
+        # ref-create would fail anyway, and we might paper over a real outage.
+        return "fail", f"cannot probe rollout branch: {state[6:]}"
     base_commit, _ = gj(f"repos/{full}/git/commits/{base_sha}")
     tree = []
     for path, content in files.items():
@@ -177,8 +203,10 @@ def process(repo, go):
                 {"message": msg, "tree": nt["sha"], "parents": [base_sha]})
     if c is None:
         return "fail", f"commit: {err}"
-    if gj(f"repos/{full}/git/refs", "POST", {"ref": f"refs/heads/{BRANCH}", "sha": c["sha"]})[0] is None:
-        return "fail", "ref create"
+    _ref, ref_err = gj(f"repos/{full}/git/refs", "POST",
+                       {"ref": f"refs/heads/{BRANCH}", "sha": c["sha"]})
+    if _ref is None:
+        return "fail", f"ref create: {ref_err}"
     body = ("Automated rollout of release + quality/security workers (thin callers of "
             "s-b-repo/ci-automation reusable workflows).\n\n"
             "- Release: per-change SemVer + auto notes\n- CodeQL (public repos)\n"
@@ -195,7 +223,8 @@ def main():
     ap.add_argument("--lang"); ap.add_argument("--only"); ap.add_argument("--limit", type=int)
     ap.add_argument("--go", action="store_true"); ap.add_argument("--list", action="store_true")
     a = ap.parse_args()
-    rows = json.load(open(AUDIT_JSON))
+    with open(AUDIT_JSON, encoding="utf-8") as _f:
+        rows = json.load(_f)
     repos = [r for r in rows if is_source(r) and is_legit(r)]
     if a.lang:
         repos = [r for r in repos if (r["language"] or "") == a.lang]

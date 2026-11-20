@@ -12,10 +12,16 @@ import sys
 prev = sys.argv[1] if len(sys.argv) > 1 else "none"
 rng = [] if prev in ("", "none") else [f"{prev}..HEAD"]
 
-raw = subprocess.run(
+# Don't swallow a git failure into empty notes; surface it and exit non-zero so
+# the release workflow fails loudly rather than tagging with an empty body.
+proc = subprocess.run(
     ["git", "log", "--no-merges", "--format=%H%x1f%h%x1f%s%x1f%an", *rng],
     capture_output=True, text=True,
-).stdout
+)
+if proc.returncode != 0:
+    sys.stderr.write(proc.stderr)
+    sys.exit(f"git log failed (exit {proc.returncode})")
+raw = proc.stdout
 
 GROUPS = [
     ("🚀 Features", re.compile(r"^feat(\([^)]*\))?!?:", re.I)),

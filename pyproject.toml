@@ -1,0 +1,26 @@
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+# These CLI scripts use a deliberately dense style: grouped imports on one
+# line and semicolon-separated statements inside tight loops. We lint for
+# real-bug shapes (F = undefined names, B = bugbear, E7xx logic errors) but
+# don't pick fights with the author's layout preferences.
+select = ["E", "F", "W", "B", "RET"]
+ignore = [
+    "E501",  # long lines
+    "E402",  # top-level code before import (intentional in migrate.py)
+    "E401",  # multiple imports on one line (intentional terse style)
+    "E701",  # one-line if…: return
+    "E702",  # semicolon statements
+    "E741",  # ambiguous var names (`l`, `I`, `O`) — none present
+    "B008",  # function calls in argument defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
