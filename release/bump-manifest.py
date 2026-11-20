@@ -17,7 +17,9 @@ from pathlib import Path
 
 if len(sys.argv) != 2:
     sys.exit("usage: bump-manifest.py <version-without-v>")
-version = sys.argv[1].lstrip("v").strip()
+arg = sys.argv[1].strip()
+# Drop one leading 'v' only — lstrip('v') would also strip 'vvv' or 'vuln...'.
+version = arg[1:] if arg[:1] == "v" else arg
 if not re.fullmatch(r"\d+\.\d+\.\d+", version):
     sys.exit(f"not a plain X.Y.Z version: {version!r}")
 
@@ -74,11 +76,13 @@ p = Path("package.json")
 if p.is_file():
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"warning: package.json is not valid JSON ({exc}); skipping",
+              file=sys.stderr)
+    else:
         if isinstance(data, dict) and data.get("version") != version:
             data["version"] = version
             write(p, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-    except json.JSONDecodeError:
-        pass
 
 # --- pyproject.toml -------------------------------------------------------
 p = Path("pyproject.toml")
@@ -89,10 +93,17 @@ if p.is_file():
         write(p, out)
 
 # --- pubspec.yaml (Dart/Flutter) ------------------------------------------
+# Dart versions are `X.Y.Z` or `X.Y.Z+<build>`. Replace only the semver part
+# and keep the `+build` suffix so a bump never rewrites the build number.
 p = Path("pubspec.yaml")
 if p.is_file():
     txt = p.read_text(encoding="utf-8")
-    out, n = re.subn(r"(?m)^(version:\s*).*$", rf"\g<1>{version}", txt, count=1)
+    out, n = re.subn(
+        r"(?m)^(version:\s*)\d+\.\d+\.\d+(\+[^\s#]+)?",
+        rf"\g<1>{version}\g<2>",
+        txt,
+        count=1,
+    )
     if n and out != txt:
         write(p, out)
 
