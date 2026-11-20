@@ -19,7 +19,6 @@ Dependabot + CI instead.
 release/               # compute-release.sh, bump-manifest.py, release-notes.py (used by _reuse-release)
 templates/
   callers/             # thin caller workflows each repo gets (call the _reuse-* above)
-  ci/                  # language CI (copied into repos): rust/python/node/go/dotnet/dart/shell
 audit.py rollout.py
 ```
 
