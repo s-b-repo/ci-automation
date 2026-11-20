@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.12'
       - name: Audit all repos
         env:
           GH_TOKEN: ${{ secrets.ROLLOUT_TOKEN }}
@@ -36,14 +36,19 @@ jobs:
       - name: Roll out / update workers
         env:
           GH_TOKEN: ${{ secrets.ROLLOUT_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ARGS: ${{ inputs.args }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          # Pass user-controlled input through env, never via ${{ }} interpolation
+          # into shell, to avoid workflow command injection.
+          if [ "$EVENT_NAME" = "schedule" ]; then
             args="--go"                       # scheduled worker does the real work
           else
-            args="${{ inputs.args }}"
+            args="$INPUT_ARGS"
             [ -z "$args" ] && args="--list"   # manual dispatch defaults to dry-run
           fi
           echo "rollout.py $args"
+          # shellcheck disable=SC2086  # intentional word-split of the arg string
           python3 rollout.py $args
       - name: Upload audit report
         if: always()

@@ -52,19 +52,27 @@ jobs:
 
       - name: Compute next version
         id: ver
+        env:
+          INPUT_EXPLICIT_VERSION: ${{{{ inputs.explicit_version }}}}
+          INPUT_RELEASE_AS: ${{{{ inputs.release_as }}}}
         run: |
+          # Inputs flow through env, never via ${{{{ }}}} interpolation into
+          # shell (workflow-injection safety).
           force=""
-          ev='${{{{ inputs.explicit_version }}}}'
-          ra='${{{{ inputs.release_as }}}}'
-          if [ -n "$ev" ]; then force="$ev";
-          else case "$ra" in patch|minor|major|none) force="$ra" ;; esac; fi
+          if [ -n "$INPUT_EXPLICIT_VERSION" ]; then
+            force="$INPUT_EXPLICIT_VERSION"
+          else
+            case "$INPUT_RELEASE_AS" in patch|minor|major|none) force="$INPUT_RELEASE_AS" ;; esac
+          fi
           out="$(bash "$RUNNER_TEMP/rel/compute-release.sh" "$force")"
           echo "$out"
           echo "$out" >> "$GITHUB_OUTPUT"
 
       - name: No release needed
         if: steps.ver.outputs.next_version == ''
-        run: echo "Nothing to release (bump=${{{{ steps.ver.outputs.bump }}}})."
+        env:
+          BUMP: ${{{{ steps.ver.outputs.bump }}}}
+        run: echo "Nothing to release (bump=$BUMP)."
 
       - name: Configure git identity
         if: steps.ver.outputs.next_version != ''
@@ -74,16 +82,19 @@ jobs:
 
       - name: Sync manifest version (best-effort)
         if: steps.ver.outputs.next_version != '' && env.SYNC_MANIFEST != 'off'
+        env:
+          NEXT_VERSION: ${{{{ steps.ver.outputs.next_version }}}}
+          REF_NAME: ${{{{ github.ref_name }}}}
         run: |
-          v="${{{{ steps.ver.outputs.next_version }}}}"
+          v="$NEXT_VERSION"
           changed="$(python3 "$RUNNER_TEMP/rel/bump-manifest.py" "${{v#v}}" 2>/dev/null || true)"
           if [ -n "$changed" ]; then
             echo "Bumped: $changed"
             printf '%s\\n' "$changed" | xargs -r git add --
             git commit -m "chore(release): ${{v}} [skip ci]"
-            if ! git push origin "HEAD:${{{{ github.ref_name }}}}"; then
+            if ! git push origin "HEAD:${{REF_NAME}}"; then
               echo "::warning::manifest push rejected — releasing without the bump"
-              git reset --hard "origin/${{{{ github.ref_name }}}}"
+              git reset --hard "origin/${{REF_NAME}}"
             fi
           fi
 
@@ -91,15 +102,25 @@ jobs:
         if: steps.ver.outputs.next_version != ''
         env:
           GH_TOKEN: ${{{{ github.token }}}}
+          NEXT_VERSION: ${{{{ steps.ver.outputs.next_version }}}}
+          PREV_VERSION: ${{{{ steps.ver.outputs.prev }}}}
+          SERVER_URL: ${{{{ github.server_url }}}}
+          REPOSITORY: ${{{{ github.repository }}}}
         run: |
-          v="${{{{ steps.ver.outputs.next_version }}}}"
-          prev="${{{{ steps.ver.outputs.prev }}}}"
+          v="$NEXT_VERSION"
+          prev="$PREV_VERSION"
+          # Validate the tag from the generator: refuse anything that is not
+          # vX.Y.Z (compute-release.sh guards this, but belt+braces).
+          case "$v" in
+            v[0-9]*.[0-9]*.[0-9]*) : ;;
+            *) echo "::error::invalid version string: $v"; exit 1 ;;
+          esac
           if git rev-parse "$v" >/dev/null 2>&1; then
             echo "::error::tag $v already exists"; exit 1
           fi
           python3 "$RUNNER_TEMP/rel/release-notes.py" "$prev" > "$RUNNER_TEMP/rel/notes.md"
           if [ "$prev" != "none" ] && [ -n "$prev" ]; then
-            {{ echo; echo "**Full Changelog**: ${{{{ github.server_url }}}}/${{{{ github.repository }}}}/compare/${{prev}}...${{v}}"; }} >> "$RUNNER_TEMP/rel/notes.md"
+            {{ echo; echo "**Full Changelog**: ${{SERVER_URL}}/${{REPOSITORY}}/compare/${{prev}}...${{v}}"; }} >> "$RUNNER_TEMP/rel/notes.md"
           fi
           git tag -a "$v" -m "$v"
           git push origin "refs/tags/$v"
